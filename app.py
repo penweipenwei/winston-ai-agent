@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GNEWS_API_KEY = "6e7d2499dd21d867dad271d86b0cab92" # 請替換成您的 API 金鑰
-CSV_PATH = "C:/Users/penwe/math_lessons_cleaned.csv" # 請確保此路徑正確，或使用相對路徑並將檔案放在同目錄
+CSV_PATH = "math_lessons_cleaned.csv"# 請確保此路徑正確，或使用相對路徑並將檔案放在同目錄
 
 try:
     df_math = pd.read_csv(CSV_PATH)
