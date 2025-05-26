@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>Winston 的 AI Agent</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f4f4; margin: 20px; padding-bottom: 200px; /* Add padding to prevent overlap by fixed agent */ }
+        .section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
+        select, button, input, textarea { padding: 8px; font-size: 16px; margin: 10px 0; }
+        .hidden { display: none; }
+        #questionArea button, #feedbackArea button { margin-left: 10px; }
+
+        /* --- Virtual Agent CSS --- */
+        #virtualAgentContainer {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 450px; /* Adjusted width based on user feedback */
+            z-index: 1000;
+            border: 2px solid #ccc;
+            border-radius: 10px;
+            background-color: #f9f9f9;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        #virtualAgentContainer img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        /* --- End Virtual Agent CSS --- */
+    </style>
+</head>
+<body>
+
+<div class="section">
+    <h2>📰 新聞摘要 + 語音播放</h2>
+    <label for="categorySelect">選擇類別：</label>
+    <select id="categorySelect">
+        <option value="general">綜合</option>
+        <option value="world">國際</option>
+        <option value="technology">科技</option>
+        <option value="nation">國內</option>
+        <option value="business">商業</option>
+        <option value="sports">體育</option>
+        <option value="science">科學</option>
+        <option value="health">健康</option>
+    </select>
+    <button onclick="loadNews()">載入新聞</button>
+    <div id="newsArea"></div>
+</div>
+
+<div class="section">
+    <h2>📘 數學智慧出題 + 語音播放</h2>
+    <label for="unitSelect">選擇單元小節：</label>
+    <select id="unitSelect"></select>
+    <button onclick="generateQuestion()">出題</button>
+
+    <div id="questionArea" style="margin-top:20px;">
+        <p><strong>題目：</strong><span id="questionText">(請先點出題)</span> <button onclick="speakQuestion()">🔊 朗讀題目</button></p>
+        <div id="questionAudioContainer" style="margin-top: 5px;"></div>
+        <p id="correctAnswerParagraph" class="hidden"><strong>正確答案：</strong><span id="answerText"></span></p>
+        <p id="explanationParagraph" class="hidden"><strong>解說：</strong><span id="explanationText"></span></p>
+    </div>
+</div>
+
+<div class="section">
+    <h2>✏️ 作答區</h2>
+    <textarea id="userAnswer" placeholder="請輸入你的答案" rows="3" style="width: 80%; margin-bottom: 10px;"></textarea>
+    <button onclick="submitAnswer()">提交答案</button>
+    <div id="feedbackArea" style="margin-top: 10px; font-weight: bold;">
+        {/* Structure will be set by window.onload to include the audio container */}
+    </div>
+</div>
+
+<div id="virtualAgentContainer">
+    <img id="agentImage" src="/static/images/agent_idle.png" alt="AI Agent">
+</div>
+<script>
+let currentMathQuestion = "";
+let originalAnswer = "";
+let originalExplanation = "";
+let currentExplanation = "";
+
+// --- Virtual Agent JavaScript ---
+const agentImageElement = document.getElementById('agentImage');
+const agentIdleImg = "/static/images/agent_idle.png";
+const agentSpeakingFrames = [
+    "/static/images/agent_speaking_closed.png",
+    "/static/images/agent_speaking_half.png",
+    "/static/images/agent_speaking_open.png",
+    "/static/images/agent_speaking_half.png"
+];
+
+let speakingAnimationInterval;
+let idleAnimationInterval;
+let currentSpeakingFrame = 0;
+let isSpeaking = false;
+
+function setAgentImage(src) {
+    if (agentImageElement) {
+        agentImageElement.src = src;
+    }
+}
+
+function prepareToSpeak() {
+    if (isSpeaking) return;
+    isSpeaking = true;
+    clearInterval(idleAnimationInterval);
+    setAgentImage(agentSpeakingFrames[0]);
+}
+
+function animateSpeaking() {
+    if (!isSpeaking) return;
+    clearInterval(speakingAnimationInterval);
+
+    currentSpeakingFrame = 0;
+    setAgentImage(agentSpeakingFrames[currentSpeakingFrame]);
+
+    speakingAnimationInterval = setInterval(() => {
+        currentSpeakingFrame = (currentSpeakingFrame + 1) % agentSpeakingFrames.length;
+        setAgentImage(agentSpeakingFrames[currentSpeakingFrame]);
+    }, 150);
+}
+
+
+function stopSpeakingAnimation() {
+    isSpeaking = false;
+    clearInterval(speakingAnimationInterval);
+    setAgentImage(agentIdleImg);
+    startIdleAnimation();
+}
+
+function startIdleAnimation() {
+    if (isSpeaking) return;
+    clearInterval(idleAnimationInterval);
+    setAgentImage(agentIdleImg);
+
+    idleAnimationInterval = setInterval(() => {
+        if (isSpeaking) {
+            clearInterval(idleAnimationInterval);
+            return;
+        }
+        setAgentImage(agentSpeakingFrames[0]);
+        setTimeout(() => {
+            if (!isSpeaking) setAgentImage(agentIdleImg);
+        }, 150);
+    }, 5000);
+}
+// --- End Virtual Agent JavaScript ---
+
+
+async function loadUnits() {
+    try {
+        const res = await fetch('/get-math-units');
+        const units = await res.json();
+        const select = document.getElementById("unitSelect");
+        select.innerHTML = "";
+
+        if (units && units.length > 0) {
+            units.forEach(unit => {
+                const opt = document.createElement("option");
+                opt.value = unit;
+                opt.textContent = unit;
+                select.appendChild(opt);
+            });
+        } else {
+            const opt = document.createElement("option");
+            opt.textContent = "無可用單元";
+            opt.disabled = true;
+            select.appendChild(opt);
+        }
+    } catch (error) {
+        const select = document.getElementById("unitSelect");
+        select.innerHTML = "";
+        const opt = document.createElement("option");
+        opt.textContent = "載入單元失敗";
+        opt.disabled = true;
+        select.appendChild(opt);
+        console.error("單元載入失敗：", error);
+    }
+}
+
+async function generateQuestion() {
+    const unitSelect = document.getElementById("unitSelect");
+    const questionTextSpan = document.getElementById("questionText");
+    const answerTextSpan = document.getElementById("answerText");
+    const explanationTextSpan = document.getElementById("explanationText");
+    const feedbackTextSpan = document.getElementById("feedbackText");
+    const userAnswerTextarea = document.getElementById("userAnswer");
+    const correctAnswerParagraph = document.getElementById("correctAnswerParagraph");
+    const explanationParagraph = document.getElementById("explanationParagraph");
+    const questionAudioContainer = document.getElementById("questionAudioContainer");
+    const explanationAudioContainer = document.getElementById("explanationAudioContainer");
+
+
+    if (!unitSelect.value || unitSelect.options?.[unitSelect.selectedIndex]?.disabled) {
+        questionTextSpan.textContent = "(請先選擇一個有效的單元)";
+        answerTextSpan.textContent = "";
+        explanationTextSpan.textContent = "";
+        if(feedbackTextSpan) feedbackTextSpan.textContent = "";
+        currentMathQuestion = "";
+        originalAnswer = "";
+        originalExplanation = "";
+        currentExplanation = "";
+        correctAnswerParagraph.classList.add("hidden");
+        explanationParagraph.classList.add("hidden");
+        if(questionAudioContainer) questionAudioContainer.innerHTML = "";
+        if(explanationAudioContainer) explanationAudioContainer.innerHTML = "";
+        return;
+    }
+    const unit = unitSelect.value;
+    const cacheBuster = "&t=" + new Date().getTime();
+
+    questionTextSpan.textContent = "正在出題中...";
+    answerTextSpan.textContent = "";
+    explanationTextSpan.textContent = "";
+    if(feedbackTextSpan) feedbackTextSpan.textContent = "";
+    userAnswerTextarea.value = "";
+    correctAnswerParagraph.classList.add("hidden");
+    explanationParagraph.classList.add("hidden");
+    if(questionAudioContainer) questionAudioContainer.innerHTML = "";
+    if(explanationAudioContainer) explanationAudioContainer.innerHTML = "";
+
+
+    try {
+        const res = await fetch(`/generate-math-question?unit=${encodeURIComponent(unit)}${cacheBuster}`);
+        const data = await res.json();
+
+        currentMathQuestion = data.question || "";
+        originalAnswer = data.answer || "";
+        originalExplanation = data.explanation || "";
+        questionTextSpan.textContent = currentMathQuestion || "(無法產生題目)";
+        answerTextSpan.textContent = "";
+        explanationTextSpan.textContent = "";
+
+    } catch (error) {
+        console.error("出題失敗:", error);
+        questionTextSpan.textContent = "(出題時發生錯誤)";
+        currentMathQuestion = "";
+        originalAnswer = "";
+        originalExplanation = "";
+        currentExplanation = "";
+    }
+}
+
+async function submitAnswer() {
+    const userAnswer = document.getElementById("userAnswer").value;
+    const feedbackTextSpan = document.getElementById("feedbackText");
+    const answerTextSpan = document.getElementById("answerText");
+    const explanationTextSpan = document.getElementById("explanationText");
+    const correctAnswerParagraph = document.getElementById("correctAnswerParagraph");
+    const explanationParagraph = document.getElementById("explanationParagraph");
+    const explanationAudioContainer = document.getElementById("explanationAudioContainer");
+
+    if (!currentMathQuestion) {
+        if(feedbackTextSpan) feedbackTextSpan.textContent = "請先出題後再提交答案。";
+        currentExplanation = "";
+        return;
+    }
+    if (!userAnswer.trim()) {
+        if(feedbackTextSpan) feedbackTextSpan.textContent = "請輸入您的答案。";
+        currentExplanation = "";
+        return;
+    }
+
+    if(feedbackTextSpan) feedbackTextSpan.textContent = "正在檢查答案...";
+    currentExplanation = "";
+    if(explanationAudioContainer) explanationAudioContainer.innerHTML = "";
+
+    try {
+        const res = await fetch(`/check-answer`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                question: currentMathQuestion,
+                answer: userAnswer
+            }),
+        });
+        const data = await res.json();
+
+        currentExplanation = data.explanation || "無法獲取批改結果。";
+        if(feedbackTextSpan) feedbackTextSpan.textContent = currentExplanation;
+        answerTextSpan.textContent = "";
+        explanationTextSpan.textContent = "";
+        correctAnswerParagraph.classList.add("hidden");
+        explanationParagraph.classList.add("hidden");
+
+    } catch (error) {
+        console.error("提交答案失敗:", error);
+        if(feedbackTextSpan) feedbackTextSpan.textContent = "提交答案時發生錯誤。";
+        currentExplanation = "";
+    }
+}
+
+async function speakText(text, containerId) {
+    if (!text) {
+        console.warn("沒有文字可以朗讀。");
+        return;
+    }
+
+    const audioBox = document.getElementById(containerId);
+    if (!audioBox) {
+        console.error("找不到音訊容器:", containerId);
+        return;
+    }
+    audioBox.innerHTML = "正在準備語音...";
+    prepareToSpeak();
+
+    try {
+        const res = await fetch('/play-news-tts', {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: text })
+        });
+        const data = await res.json();
+
+        if (data.audio_url) {
+            const audioUrlWithCacheBuster = data.audio_url + "?t=" + new Date().getTime();
+            const audio = document.createElement("audio");
+            audio.src = audioUrlWithCacheBuster;
+
+            let hasPlayed = false;
+
+            const playHandler = () => {
+                if (!hasPlayed && isSpeaking) {
+                    audioBox.innerHTML = "";
+                    audioBox.appendChild(audio);
+                    audio.controls = true;
+                    audio.play().then(() => {
+                        animateSpeaking();
+                        console.log("音訊開始播放，啟動嘴型動畫:", audioUrlWithCacheBuster, "於容器:", containerId);
+                    }).catch(e => {
+                        console.error("音訊播放命令失敗:", e);
+                        stopSpeakingAnimation();
+                        audioBox.innerHTML = "<p style='color:red;'>音訊無法自動播放。</p>";
+                    });
+                    hasPlayed = true;
+                }
+            };
+
+            audio.addEventListener('canplaythrough', playHandler);
+            audio.addEventListener('play', playHandler);
+
+
+            audio.onended = () => {
+                stopSpeakingAnimation();
+            };
+            audio.onerror = (e) => {
+                console.error("音訊播放錯誤:", e);
+                stopSpeakingAnimation();
+                audioBox.innerHTML = "<p style='color:red;'>音訊播放失敗。</p>";
+            };
+            audio.load();
+        } else if (data.error) {
+            console.error("朗讀失敗 (API):", data.error);
+            audioBox.innerHTML = `<p style='color:red;'>朗讀失敗: ${data.error}</p>`;
+            stopSpeakingAnimation();
+        } else {
+            console.warn("朗讀請求成功，但沒有收到音訊 URL。");
+            audioBox.innerHTML = "<p style='color:orange;'>朗讀失敗，請稍後再試。</p>";
+            stopSpeakingAnimation();
+        }
+    } catch (error) {
+        console.error("朗讀時發生網路或Fetch錯誤:", error);
+        audioBox.innerHTML = "<p style='color:red;'>朗讀時發生錯誤。</p>";
+        stopSpeakingAnimation();
+    }
+}
+
+
+function speakQuestion() {
+    const questionAudioContainer = document.getElementById("questionAudioContainer");
+    if(questionAudioContainer) questionAudioContainer.innerHTML = "";
+    speakText(currentMathQuestion, "questionAudioContainer");
+}
+
+function speakExplanation() {
+    const explanationAudioContainer = document.getElementById("explanationAudioContainer");
+    if(explanationAudioContainer) explanationAudioContainer.innerHTML = "";
+    speakText(currentExplanation, "explanationAudioContainer");
+}
+
+async function loadNews() {
+    const category = document.getElementById("categorySelect").value;
+    const newsArea = document.getElementById("newsArea");
+    newsArea.innerHTML = "正在載入新聞...";
+
+    try {
+        const res = await fetch(`/get-news?category=${encodeURIComponent(category)}`);
+        const data = await res.json();
+        newsArea.innerHTML = "";
+
+        if (data.error) {
+            newsArea.innerHTML = `<p style="color: red;">${data.error}</p>`;
+            return;
+        }
+
+        if (data && data.length > 0) {
+            data.forEach(newsItem => {
+                const div = document.createElement("div");
+                const audioContainerId = "audio_container_" + Math.random().toString(36).substring(2, 9);
+
+                const title = document.createElement("h4");
+                title.textContent = newsItem.title;
+                div.appendChild(title);
+
+                const summary = document.createElement("p");
+                summary.textContent = newsItem.summary;
+                div.appendChild(summary);
+
+                const playButton = document.createElement("button");
+                playButton.textContent = "🔊 播放語音";
+                playButton.onclick = () => {
+                    speakTextForNews(newsItem.summary, audioContainerId);
+                };
+                div.appendChild(playButton);
+
+                const audioDiv = document.createElement("div");
+                audioDiv.id = audioContainerId;
+                div.appendChild(audioDiv);
+
+                const hr = document.createElement("hr");
+                div.appendChild(hr);
+                newsArea.appendChild(div);
+            });
+        } else {
+            newsArea.innerHTML = "<p>目前沒有新聞可顯示。</p>";
+        }
+    } catch (error) {
+        console.error("載入新聞失敗:", error);
+        newsArea.innerHTML = "<p>載入新聞時發生錯誤，請稍後再試。</p>";
+    }
+}
+
+async function speakTextForNews(text, containerId) {
+    if (!text) {
+        console.warn("沒有新聞文字可以朗讀。");
+        return;
+    }
+    // For news, we use the same speakText logic to handle animation and audio in a container
+    speakText(text, containerId);
+}
+
+
+window.onload = () => {
+    loadUnits();
+    const feedbackArea = document.getElementById("feedbackArea");
+    feedbackArea.innerHTML = `<strong>AI 回覆：</strong><span id="feedbackText"></span>
+                              <button onclick="speakExplanation()">🔊 朗讀解說</button>
+                              <div id="explanationAudioContainer" style="margin-top: 5px;"></div>`;
+    startIdleAnimation();
+};
+</script>
+</body>
+</html>
