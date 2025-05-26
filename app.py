@@ -23,7 +23,7 @@ audio_tempfile_path = None
 
 @app.route('/')
 def index():
-    return render_template('index4_json_ready_gemini444.html') # 確保這個 HTML 檔案名稱與您前端使用的檔案一致
+    return render_template("index.html") # 確保這個 HTML 檔案名稱與您前端使用的檔案一致
 
 @app.route('/get-news')
 def get_news():
